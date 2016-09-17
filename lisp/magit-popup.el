@@ -505,7 +505,7 @@ usually specified in that order):
 
 `:default-arguments'
   The default arguments, a list of switches (which are then
-  enabled by default) and options with there default values, as
+  enabled by default) and options with their default values, as
   in \"--OPT=OPTVAL\".
 
 `:sequence-predicate'
