@@ -177,17 +177,20 @@ If there is only one worktree, then insert nothing."
                  worktrees))
                (align (1+ (-max (--map (string-width (car it)) cols)))))
           (pcase-dolist (`(,head . ,path) cols)
-            (magit-insert-section (worktree path)
-              (insert head)
-              (insert (make-string (- align (length head)) ?\s))
-              (insert (let ((r (file-relative-name path))
-                            (a (abbreviate-file-name path)))
-                        (if (or (> (string-width r) (string-width a))
-                                (equal r "./"))
-                            a
-                          r)))
-              (insert ?\n))))
+            (magit--insert-worktree path head align)))
         (insert ?\n)))))
+
+(defun magit--insert-worktree (path head align)
+  (magit-insert-section (worktree path)
+    (insert head)
+    (insert (make-string (- align (length head)) ?\s))
+    (insert (let ((r (file-relative-name path))
+                  (a (abbreviate-file-name path)))
+              (if (or (> (string-width r) (string-width a))
+                      (equal r "./"))
+                  a
+                r)))
+    (insert ?\n)))
 
 ;;; _
 (provide 'magit-worktree)
