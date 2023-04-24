@@ -2113,56 +2113,91 @@ PATH has to be relative to the super-repository."
        10 -5)
     (magit-git-string "submodule--helper" "name" path)))
 
-(defun magit-list-worktrees ()
-  "Return list of the worktrees of this repository.
-The returned list has the form (PATH COMMIT BRANCH BARE DETACHED
-LOCKED PRUNABLE).  The last four elements are booleans, with the
-exception of LOCKED and PRUNABLE, which may also be a string."
+(defun magit-list-worktrees-raw ()
+  "Get a list of worktrees in this repository.
+The return value is a list of alists with keys defined by
+
+    git worktree list --porcelain
+
+with minimal post-processing. Use `magit-list-worktrees' if you
+need more robust handling (e.g., fixes to known bugs in
+`git-worktree(1)')."
   (let ((remote (file-remote-p default-directory))
-        worktrees worktree)
-    (dolist (line (let ((magit-git-global-arguments
-                         ;; KLUDGE At least in Git v2.8.3 this argument
-                         ;; would trigger a segfault.
-                         (remove "--no-pager" magit-git-global-arguments)))
-                    (magit-git-lines "worktree" "list" "--porcelain")))
-      (cond ((string-prefix-p "worktree" line)
-             (let ((path (substring line 9)))
-               (when remote
-                 (setq path (concat remote path)))
-               ;; If the git directory is separate from the main
-               ;; worktree, then "git worktree" returns the git
-               ;; directory instead of the worktree, which isn't
-               ;; what it is supposed to do and not what we want.
-               ;; However, if the worktree has been removed, then
-               ;; we want to return it anyway; instead of nil.
-               (setq path (or (magit-toplevel path) path))
-               (setq worktree (list path nil nil nil nil nil nil))
-               (push worktree worktrees)))
-            ((string-prefix-p "HEAD" line)
-             (setf (nth 1 worktree) (substring line 5)))
-            ((string-prefix-p "branch" line)
-             (setf (nth 2 worktree) (substring line 18)))
-            ((string-equal line "bare")
-             ;; Correct a situation where the worktree is reported as
-             ;; "bare" but the working copy is actually specified in
-             ;; `core.worktree'.
-             (let* ((default-directory (car worktree))
-                    (wt (and (not (magit-get-boolean "core.bare"))
-                             (magit-get "core.worktree"))))
-               (if (and wt (file-exists-p (expand-file-name wt)))
-                   (progn (setf (nth 0 worktree) (expand-file-name wt))
-                          (setf (nth 2 worktree) (magit-rev-parse "HEAD"))
-                          (setf (nth 3 worktree) (magit-get-current-branch)))
-                 (setf (nth 3 worktree) t))))
-            ((string-equal line "detached")
-             (setf (nth 4 worktree) t))
-            ((string-prefix-p line "locked")
-             (setf (nth 5 worktree)
-                   (if (> (length line) 6) (substring line 7) t)))
-            ((string-prefix-p line "prunable")
-             (setf (nth 6 worktree)
-                   (if (> (length line) 8) (substring line 9) t)))))
-    (nreverse worktrees)))
+        (raw (let ((magit-git-global-arguments
+                    ;; KLUDGE At least in Git v2.8.3 this argument
+                    ;; would trigger a segfault.
+                    (remove "--no-pager" magit-git-global-arguments)))
+               (magit-git-output "worktree" "list" "--porcelain" "-z"))))
+    (when (length> raw 0)
+      (mapcar
+       (lambda (chunk)
+         (let ((worktree
+                (mapcar
+                 (lambda (line)
+                   (if-let ((idx (string-match-p " " line)))
+                       (cons (intern (substring line 0 idx))
+                             (substring line (1+ idx)))
+                     ;; Some lines are one-word only; these are
+                     ;; flags. Put them in our hashmap as `t'.
+                     (cons line t)))
+                 (string-split chunk "\0" 'omit-nulls))))
+
+           ;; ensure the worktree path is at least usable if this was
+           ;; executed remotely
+           (when remote
+             (setf (alist-get 'worktree worktree)
+                   (concat remote (alist-get 'worktree worktree))))
+
+           worktree))
+       (string-split raw "\0\0" 'omit-nulls)))))
+
+(defun magit-list-worktrees-fix-worktree (worktree)
+  "Fix known issues with WORKTREE objects.
+The Git command behind `magit-list-worktrees-raw' is known to
+make mistakes, so fix these mistakes here by modifying
+WORKTREE (which is then returned).
+
+WORKTREE should be an alist as returned by
+`magit-list-worktrees-raw'."
+  (let ((path (alist-get 'worktree worktree)))
+    ;; If the git directory is separate from the main worktree, then
+    ;; "git worktree" returns the git directory instead of the
+    ;; worktree, which isn't what it is supposed to do and not what we
+    ;; want. However, if the worktree has been removed, then we want
+    ;; to return it anyway; instead of nil.
+    (setq path (or (magit-toplevel path) path))
+    (setf (alist-get 'worktree worktree) path)
+
+    ;; Correct a situation where the worktree is reported as 'bare'
+    ;; but the working copy is actually specified in core.worktree
+    (when (alist-get 'bare worktree)
+      (let* ((default-directory path)
+             (wt (and (not (magit-get-boolean "core.bare"))
+                      (magit-get "core.worktree"))))
+        (when (and wt (file-exists-p (expand-file-name wt)))
+          (setf (alist-get 'worktree worktree) (expand-file-name wt))
+          (setf (alist-get 'bare worktree) nil)
+          (setf (alist-get 'HEAD worktree) (magit-rev-parse "HEAD"))
+          (setf (alist-get 'branch worktree) (magit-get-current-branch)))))
+
+    worktree))
+
+(defun magit-list-worktrees ()
+  "List worktrees in this repository.
+Returns a list of lists of the following form
+
+    \(PATH BAREP COMMIT BRANCH)
+
+one for each worktree."
+  (thread-last
+    (magit-list-worktrees-raw)
+    (mapcar #'magit-list-worktrees-fix-worktree)
+    (mapcar
+     (lambda (wt)
+       (list (alist-get 'worktree wt)
+             (alist-get 'bare wt)
+             (alist-get 'HEAD wt)
+             (string-remove-prefix "refs/heads/" (alist-get 'branch wt)))))))
 
 (defun magit-symbolic-ref-p (name)
   (magit-git-success "symbolic-ref" "--quiet" name))

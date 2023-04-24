@@ -157,39 +157,46 @@ then show it in Dired instead."
 (defun magit-insert-worktrees ()
   "Insert sections for all worktrees.
 If there is only one worktree, then insert nothing."
-  (let ((worktrees (magit-list-worktrees)))
+  (let ((worktrees (magit-list-worktrees-raw)))
     (when (length> worktrees 1)
+      ;; Now that we know we're printing the section, go ahead and
+      ;; 'fix' our worktrees so that paths work correctly when working
+      ;; with non-standard setups and add a propertized label.
+      (setq worktrees
+            (thread-last
+              worktrees
+              (mapcar #'magit-list-worktrees-fix-worktree)
+              (mapcar (lambda (worktree)
+                        (cons (cons 'magit-label (magit-insert-worktree--make-label worktree))
+                              worktree)))))
       (magit-insert-section (worktrees)
         (magit-insert-heading "Worktrees:")
-        (let* ((cols
-                (mapcar
-                 (lambda (worktree)
-                   ;; use a full lambda/pcase-let so that we can pass
-                   ;; along the entire `worktree' to  `magit--insert-worktree'.
-                   (pcase-let ((`(,path ,commit ,branch ,barep) worktree))
-                     (cons (cond
-                            (branch (propertize
-                                     branch 'font-lock-face
-                                     (if (equal branch (magit-get-current-branch))
-                                         'magit-branch-current
-                                       'magit-branch-local)))
-                            (commit (propertize (magit-rev-abbrev commit)
-                                                'font-lock-face 'magit-hash))
-                            (barep  "(bare)"))
-                           worktree)))
-                 worktrees))
-               (align (1+ (-max (--map (string-width (cadr it)) cols)))))
-          (pcase-dolist (`(,_head . ,worktree) cols)
+        (let ((align (1+ (-max (--map (string-width (alist-get 'magit-label it)) worktrees)))))
+          (dolist (worktree worktrees)
             (magit--insert-worktree worktree align)))
         (insert ?\n)))))
 
+(defun magit-insert-worktree--make-label (worktree)
+  (let-alist worktree
+    (cond
+     (.branch
+      (setq .branch (string-remove-prefix "refs/heads/" .branch))
+      (propertize
+       .branch 'font-lock-face
+       (if (equal .branch (magit-get-current-branch))
+           'magit-branch-current
+         'magit-branch-local)))
+     (.HEAD (propertize (magit-rev-abbrev .HEAD)
+                        'font-lock-face 'magit-hash))
+     (.bare  "(bare)"))))
+
 (defun magit--insert-worktree (worktree align)
-  (pcase-let ((`(,path ,commit ,_branch ,_barep)) worktree)
-    (magit-insert-section (worktree path)
-      (insert head)
-      (insert (make-string (- align (length head)) ?\s))
-      (insert (let ((r (file-relative-name path))
-                    (a (abbreviate-file-name path)))
+  (let-alist worktree
+    (magit-insert-section (worktree .worktree)
+      (insert .magit-label)
+      (insert (make-string (- align (length .magit-label)) ?\s))
+      (insert (let ((r (file-relative-name .worktree))
+                    (a (abbreviate-file-name .worktree)))
                 (if (or (> (string-width r) (string-width a))
                         (equal r "./"))
                     a
