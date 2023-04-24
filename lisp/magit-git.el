@@ -2135,6 +2135,9 @@ PATH has to be relative to the super-repository."
                (setq worktree (list path nil nil nil))
                (push worktree worktrees)))
             ((string-equal line "bare")
+             ;; Correct a situation where the worktree is reported as
+             ;; "bare" but the working copy is actually specified in
+             ;; `core.worktree'.
              (let* ((default-directory (car worktree))
                     (wt (and (not (magit-get-boolean "core.bare"))
                              (magit-get "core.worktree"))))
