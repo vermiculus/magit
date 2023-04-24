@@ -163,34 +163,38 @@ If there is only one worktree, then insert nothing."
         (magit-insert-heading "Worktrees:")
         (let* ((cols
                 (mapcar
-                 (pcase-lambda (`(,path ,commit ,branch ,barep))
-                   (cons (cond
-                          (branch (propertize
-                                   branch 'font-lock-face
-                                   (if (equal branch (magit-get-current-branch))
-                                       'magit-branch-current
-                                     'magit-branch-local)))
-                          (commit (propertize (magit-rev-abbrev commit)
-                                              'font-lock-face 'magit-hash))
-                          (barep  "(bare)"))
-                         path))
+                 (lambda (worktree)
+                   ;; use a full lambda/pcase-let so that we can pass
+                   ;; along the entire `worktree' to  `magit--insert-worktree'.
+                   (pcase-let ((`(,path ,commit ,branch ,barep) worktree))
+                     (cons (cond
+                            (branch (propertize
+                                     branch 'font-lock-face
+                                     (if (equal branch (magit-get-current-branch))
+                                         'magit-branch-current
+                                       'magit-branch-local)))
+                            (commit (propertize (magit-rev-abbrev commit)
+                                                'font-lock-face 'magit-hash))
+                            (barep  "(bare)"))
+                           worktree)))
                  worktrees))
-               (align (1+ (-max (--map (string-width (car it)) cols)))))
-          (pcase-dolist (`(,head . ,path) cols)
-            (magit--insert-worktree path head align)))
+               (align (1+ (-max (--map (string-width (cadr it)) cols)))))
+          (pcase-dolist (`(,_head . ,worktree) cols)
+            (magit--insert-worktree worktree align)))
         (insert ?\n)))))
 
-(defun magit--insert-worktree (path head align)
-  (magit-insert-section (worktree path)
-    (insert head)
-    (insert (make-string (- align (length head)) ?\s))
-    (insert (let ((r (file-relative-name path))
-                  (a (abbreviate-file-name path)))
-              (if (or (> (string-width r) (string-width a))
-                      (equal r "./"))
-                  a
-                r)))
-    (insert ?\n)))
+(defun magit--insert-worktree (worktree align)
+  (pcase-let ((`(,path ,commit ,_branch ,_barep)) worktree)
+    (magit-insert-section (worktree path)
+      (insert head)
+      (insert (make-string (- align (length head)) ?\s))
+      (insert (let ((r (file-relative-name path))
+                    (a (abbreviate-file-name path)))
+                (if (or (> (string-width r) (string-width a))
+                        (equal r "./"))
+                    a
+                  r)))
+      (insert ?\n))))
 
 ;;; _
 (provide 'magit-worktree)
