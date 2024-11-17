@@ -823,6 +823,42 @@ restrict the log to the lines that the region touches."
                     :test #'string-prefix-p))
    nil magit-log-buffer-file-locked))
 
+;;;###autoload
+(defun magit-log-trace-lines (file region rev)
+  "Show log for the definition at point."
+  (interactive (list (or (magit-file-relative-name)
+                         (user-error "Buffer isn't visiting a file"))
+                     (if (region-active-p)
+                         (region-bounds)
+                       (list (cons (point) (point))))
+                     (or magit-buffer-refname
+                         (magit-get-current-branch)
+                         "HEAD")))
+  (require 'magit)
+  (let ((lines (save-excursion
+                 (mapcar (lambda (pair)
+                           (with-current-buffer (magit-find-file-noselect "{worktree}" file)
+                             (save-restriction
+                               (widen)
+                               (if (= (car pair) (cdr pair))
+                                   (let ((cur (1+ (array-current-line))))
+                                     (cons cur cur))
+                                 (cons (progn (goto-char (car pair))
+                                              (+ (if (looking-at "$") 0 1)
+                                                 (array-current-line)))
+                                       (progn (goto-char (cdr pair))
+                                              (+ (if (looking-at "^") 0 1)
+                                                 (array-current-line))))))))
+                         region))))
+    (magit-log-setup-buffer
+     (list rev)
+     (nconc
+      (mapcar (lambda (r) (format "-L%d,%d:%s" (car r) (cdr r) file))
+              lines)
+      (cl-delete "-L" (car (magit-log-arguments))
+                 :test #'string-prefix-p))
+     nil magit-log-buffer-file-locked)))
+
 (defun magit-diff-trace-definition ()
   "Show log for the definition at point in a diff."
   (interactive)
